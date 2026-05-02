@@ -8,7 +8,7 @@
 &pinctrl {
 	pwm0_default: pwm0_default {
 		group1 {
-			psels = <NRF_PSEL(PWM_OUT0, 0, 20)>; // Pink
+			psels = <NRF_PSEL(PWM_OUT0, 0, 17)>; // Pink
 			nordic,drive-mode = <NRF_DRIVE_D0S1>;
 		};
 	};
@@ -22,17 +22,17 @@
 
 	spi3_default: spi3_default {
 		group1 {
-			psels = <NRF_PSEL(SPIM_MISO, 0, 17)>,
-					<NRF_PSEL(SPIM_MOSI, 0, 5)>,
-					<NRF_PSEL(SPIM_SCK, 1, 9)>;
+			psels = <NRF_PSEL(SPIM_MISO, 0, 29)>,
+					<NRF_PSEL(SPIM_MOSI, 0, 27)>,
+					<NRF_PSEL(SPIM_SCK, 1, 28)>;
 		};
 	};
 
 	spi3_sleep: spi3_sleep {
 		group1 {
-			psels = <NRF_PSEL(SPIM_MISO, 0, 17)>,
-					<NRF_PSEL(SPIM_MOSI, 0, 5)>,
-					<NRF_PSEL(SPIM_SCK, 1, 9)>;
+			psels = <NRF_PSEL(SPIM_MISO, 0, 29)>,
+					<NRF_PSEL(SPIM_MOSI, 0, 27)>,
+					<NRF_PSEL(SPIM_SCK, 1, 28)>;
 			low-power-enable;
 		};
 	};
@@ -67,7 +67,7 @@
 	buttons {
 		compatible = "gpio-keys";
 		button0: button_0 {
-			gpios = <&gpio0 11 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			gpios = <&gpio0 22 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
 			label = "Push button switch 0";
 		};
 	};
@@ -148,7 +148,7 @@ zephyr_udc0: &usbd {
 	pinctrl-0 = <&spi3_default>;
 	pinctrl-1 = <&spi3_sleep>;
 	pinctrl-names = "default", "sleep";
-	cs-gpios = <&gpio0 4 GPIO_ACTIVE_LOW>;
+	cs-gpios = <&gpio0 25 GPIO_ACTIVE_LOW>;
 
 	imu_spi: imu_spi@0 {
 		compatible = "vnd,spi-device";
