@@ -1,4 +1,4 @@
-/dts-v1/;
+dts-v1/;
 #include <nordic/nrf52833_qiaa.dtsi>
 
 //move to dtsi?
@@ -41,8 +41,8 @@
 //end
 
 / {
-	model = "mochi_uf2";
-	compatible = "mochi_uf2";
+	model = "likkle";
+	compatible = "likkle";
 
 	chosen {
 		zephyr,sram = &sram0;
@@ -121,7 +121,7 @@
 };
 
 &reg1 {
-	regulator-initial-mode = <NRF5X_REG_MODE_DCDC>;
+	regulator-initial-mode = <NRF5X_REG_MODE_LDO>;
 };
 
 &adc {
@@ -175,4 +175,5 @@ zephyr_udc0: &usbd {
 		reg = <0>;
 	};
 };
+
 
