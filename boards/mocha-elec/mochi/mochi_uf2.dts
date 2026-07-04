@@ -1,4 +1,7 @@
-dts-v1/;
+// Copyright (c) 2024 Nordic Semiconductor ASA
+// SPDX-License-Identifier: Apache-2.0
+
+/dts-v1/;
 #include <nordic/nrf52833_qiaa.dtsi>
 
 //move to dtsi?
@@ -175,5 +178,3 @@ zephyr_udc0: &usbd {
 		reg = <0>;
 	};
 };
-
-
