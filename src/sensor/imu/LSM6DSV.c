@@ -2,7 +2,6 @@
 #include <string.h>
 
 #include <zephyr/logging/log.h>
-#include <zephyr/kernel.h>
 #include <hal/nrf_gpio.h>
 
 #include "LSM6DSV.h"
@@ -63,9 +62,6 @@ static void lsm_ext_stop_continuous(void);
 // Scanning mode: when true, one-shot reads never start continuous mode.
 // Set during ext_setup() for device scanning, cleared by lsm_init() for normal operation.
 static bool ext_scanning_mode = true;
-
-#define LSM6DSV_SHUB_XLDA_TIMEOUT_MS 80
-#define LSM6DSV_SHUB_OP_TIMEOUT_MS 20
 
 int lsm_init(float clock_rate, float accel_time, float gyro_time, float *accel_actual_time, float *gyro_actual_time)
 {
@@ -647,11 +643,9 @@ static int lsm_ext_start_continuous(uint8_t addr, uint8_t sub_addr, uint8_t num_
 
 int lsm_ext_write(const uint8_t addr, const uint8_t *buf, uint32_t num_bytes)
 {
-	int64_t t0 = k_uptime_get();
 	if (num_bytes != 2)
 	{
 		LOG_ERR("Unsupported write");
-		LOG_INF("lsm_ext_write addr=0x%02X bytes=%u duration=%lld ms (unsupported)", addr, (unsigned)num_bytes, k_uptime_get() - t0);
 		return -1;
 	}
 	// Stop continuous mode before writing (I2C master must be reconfigured)
@@ -663,18 +657,17 @@ int lsm_ext_write(const uint8_t addr, const uint8_t *buf, uint32_t num_bytes)
 	err |= ssi_burst_write(SENSOR_INTERFACE_DEV_IMU, LSM6DSV_SLV0_ADD, slv0, 3);
 	err |= ssi_reg_write_byte(SENSOR_INTERFACE_DEV_IMU, LSM6DSV_DATAWRITE_SLV0, buf[1]);
 	err |= ssi_reg_write_byte(SENSOR_INTERFACE_DEV_IMU, LSM6DSV_MASTER_CONFIG, 0x44); // WRITE_ONCE(0x40) + MASTER_ON(0x04)
-	// Wait for transaction: one-shot starts on accel XLDA, which can take up to
-	// 67ms when the accel is still at the 15Hz startup ODR.
+	// Wait for transaction: write is triggered on accel XLDA, needs up to 67ms at 15Hz ODR
 	err |= ssi_reg_write_byte(SENSOR_INTERFACE_DEV_IMU, LSM6DSV_FUNC_CFG_ACCESS, 0x00); // switch to normal registers
 	uint8_t tmp;
 	err |= ssi_reg_read_byte(SENSOR_INTERFACE_DEV_IMU, LSM6DSV_OUTX_H_A, &tmp); // clear current XLDA
 	uint8_t status = 0;
-	int64_t timeout = k_uptime_get() + LSM6DSV_SHUB_XLDA_TIMEOUT_MS;
+	int64_t timeout = k_uptime_get() + 10;
 	while (!(status & 0x01) && k_uptime_get() < timeout) // wait for new XLDA
 		err |= ssi_reg_read_byte(SENSOR_INTERFACE_DEV_IMU, LSM6DSV_STATUS_REG, &status);
 	err |= ssi_reg_write_byte(SENSOR_INTERFACE_DEV_IMU, LSM6DSV_FUNC_CFG_ACCESS, 0x40); // switch to sensor hub registers
 	status = 0;
-	timeout = k_uptime_get() + LSM6DSV_SHUB_OP_TIMEOUT_MS;
+	timeout = k_uptime_get() + 10;
 	while (!(status & 0x80) && k_uptime_get() < timeout) // WR_ONCE_DONE
 		err |= ssi_reg_read_byte(SENSOR_INTERFACE_DEV_IMU, LSM6DSV_STATUS_MASTER, &status);
 	err |= ssi_reg_write_byte(SENSOR_INTERFACE_DEV_IMU, LSM6DSV_MASTER_CONFIG, 0x00); // disable I2C master
@@ -683,27 +676,21 @@ int lsm_ext_write(const uint8_t addr, const uint8_t *buf, uint32_t num_bytes)
 	if (status & 0x04) // SLAVE0_NACK
 	{
 		LOG_DBG("Ext I2C write NACK from address 0x%02X", addr);
-		LOG_INF("lsm_ext_write addr=0x%02X bytes=%u duration=%lld ms (nack)", addr, (unsigned)num_bytes, k_uptime_get() - t0);
 		return -1;
 	}
 	if (~status & 0x80)
 	{
 		LOG_ERR("Write timeout");
-		LOG_INF("lsm_ext_write addr=0x%02X bytes=%u duration=%lld ms (timeout)", addr, (unsigned)num_bytes, k_uptime_get() - t0);
 		return -1;
 	}
-	LOG_INF("lsm_ext_write addr=0x%02X bytes=%u duration=%lld ms (ok)", addr, (unsigned)num_bytes, k_uptime_get() - t0);
 	return err;
-}
 }
 
 int lsm_ext_write_read(const uint8_t addr, const void *write_buf, size_t num_write, void *read_buf, size_t num_read)
 {
-	int64_t t0 = k_uptime_get();
 	if (num_write != 1 || num_read < 1 || num_read > 8)
 	{
 		LOG_ERR("Unsupported write_read");
-		LOG_INF("lsm_ext_write_read addr=0x%02X write=%u read=%u duration=%lld ms (unsupported)", addr, (unsigned)num_write, (unsigned)num_read, k_uptime_get() - t0);
 		return -1;
 	}
 
@@ -712,12 +699,11 @@ int lsm_ext_write_read(const uint8_t addr, const void *write_buf, size_t num_wri
 	// Fast path: if continuous mode is active and request matches, read SENSOR_HUB directly
 	// This avoids the ~8ms one-shot cycle (waiting for XLDA) and takes only ~20us via SPI
 	if (ext_continuous_active && addr == ext_cont_addr &&
-		sub_addr == ext_cont_sub && num_read == ext_cont_len)
+	    sub_addr == ext_cont_sub && num_read == ext_cont_len)
 	{
 		int err = ssi_reg_write_byte(SENSOR_INTERFACE_DEV_IMU, LSM6DSV_FUNC_CFG_ACCESS, 0x40);
 		err |= ssi_burst_read(SENSOR_INTERFACE_DEV_IMU, LSM6DSV_SENSOR_HUB_1, read_buf, num_read);
 		err |= ssi_reg_write_byte(SENSOR_INTERFACE_DEV_IMU, LSM6DSV_FUNC_CFG_ACCESS, 0x00);
-		LOG_INF("lsm_ext_write_read addr=0x%02X sub=0x%02X read=%u duration=%lld ms (fast-path)", addr, sub_addr, (unsigned)num_read, k_uptime_get() - t0);
 		return err;
 	}
 
@@ -732,17 +718,16 @@ int lsm_ext_write_read(const uint8_t addr, const void *write_buf, size_t num_wri
 	err |= ssi_reg_write_byte(SENSOR_INTERFACE_DEV_IMU, LSM6DSV_MASTER_CONFIG, 0x44); // WRITE_ONCE(0x40) + MASTER_ON(0x04)
 	// Wait for transaction (AN5922 One-shot read routine):
 	// START_CONFIG=0: sensor hub triggers on accel/gyro data-ready
-	// lsm_ext_setup() uses 480Hz for scan, but runtime one-shot reads may run
-	// at the configured accel ODR.
+	// lsm_ext_setup() ensures accel is running at >=15Hz before scan
 	err |= ssi_reg_write_byte(SENSOR_INTERFACE_DEV_IMU, LSM6DSV_FUNC_CFG_ACCESS, 0x00); // switch to normal registers
 	uint8_t tmp;
 	err |= ssi_reg_read_byte(SENSOR_INTERFACE_DEV_IMU, LSM6DSV_OUTX_H_A, &tmp); // clear current XLDA by reading accel data
 	uint8_t status = 0;
-	int64_t timeout = k_uptime_get() + LSM6DSV_SHUB_XLDA_TIMEOUT_MS;
+	int64_t timeout = k_uptime_get() + 10; // 10ms timeout
 	while (!(status & 0x01) && k_uptime_get() < timeout) // wait for new XLDA (accelerometer data ready)
 		err |= ssi_reg_read_byte(SENSOR_INTERFACE_DEV_IMU, LSM6DSV_STATUS_REG, &status);
 	status = 0;
-	timeout = k_uptime_get() + LSM6DSV_SHUB_OP_TIMEOUT_MS;
+	timeout = k_uptime_get() + 10;
 	while (!(status & 0x01) && k_uptime_get() < timeout) // SENS_HUB_ENDOP (bit 0)
 		err |= ssi_reg_read_byte(SENSOR_INTERFACE_DEV_IMU, LSM6DSV_STATUS_MASTER_MAINPAGE, &status);
 	// Read data
@@ -760,7 +745,6 @@ int lsm_ext_write_read(const uint8_t addr, const void *write_buf, size_t num_wri
 			LOG_DBG("Ext I2C read timeout for address 0x%02X", addr);
 		err |= ssi_reg_write_byte(SENSOR_INTERFACE_DEV_IMU, LSM6DSV_FUNC_CFG_ACCESS, 0x00);
 		memset(read_buf, 0, num_read);
-		LOG_INF("lsm_ext_write_read addr=0x%02X sub=0x%02X read=%u duration=%lld ms (nack/timeout)", addr, sub_addr, (unsigned)num_read, k_uptime_get() - t0);
 		return -1;
 	}
 	err |= ssi_burst_read(SENSOR_INTERFACE_DEV_IMU, LSM6DSV_SENSOR_HUB_1, read_buf, num_read);
@@ -770,7 +754,7 @@ int lsm_ext_write_read(const uint8_t addr, const void *write_buf, size_t num_wri
 	// In scanning mode, skip continuous to avoid start/stop overhead per address.
 	if (!err && !ext_scanning_mode)
 		lsm_ext_start_continuous(addr, sub_addr, num_read);
-	LOG_INF("lsm_ext_write_read addr=0x%02X sub=0x%02X read=%u duration=%lld ms (ok)", addr, sub_addr, (unsigned)num_read, k_uptime_get() - t0);
+
 	return err;
 }
 
