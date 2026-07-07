@@ -40,8 +40,8 @@ int lis2_update_odr(float time, float *actual_time)
 	}
 	else if (time == INFINITY) // oneshot/single
 	{
-//		MD = MD_SINGLE;
-//		ODR = 0;
+		MD = MD_SINGLE;
+		ODR = 0;
 		MD = MD_IDLE; // No idea if single measurements will be fast enough, so just use continuous anyway
 		ODR = 0;
 	}
