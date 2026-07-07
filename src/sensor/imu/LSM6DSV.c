@@ -2,7 +2,7 @@
 #include <string.h>
 
 #include <zephyr/logging/log.h>
-#include <zephyr.h>
+#include <zephyr/kernel.h>
 #include <hal/nrf_gpio.h>
 
 #include "LSM6DSV.h"
@@ -799,4 +799,3 @@ const sensor_ext_ssi_t sensor_ext_lsm6dsv = {
 	lsm_ext_write_read,
 	8
 };
-
