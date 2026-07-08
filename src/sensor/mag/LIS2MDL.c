@@ -29,6 +29,12 @@ void lis2_shutdown(void)
 
 int lis2_update_odr(float time, float *actual_time)
 {
+	if (!first_boot_done = false;
+		if (!first_boot_done) {
+		k_msleep(25);
+		first_boot_done = true; 
+	}
+	
 	int ODR;
 	uint8_t MODR;
 	uint8_t MD;
