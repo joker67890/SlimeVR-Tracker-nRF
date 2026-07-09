@@ -5,10 +5,26 @@
 
 // https://www.st.com/resource/en/datasheet/lis2mdl.pdf
 #define LIS2MDL_CFG_REG_A 0x60
+#define LIS2MDL_CFG_REG_B 0x61
+#define LIS2MDL_CFG_REG_C 0x62
+
+#define LIS2MDL_STATUS_REG 0x67
+#define LIS2MDL_ZYXDA 0x08 // STATUS_REG bit3: X/Y/Z new data available
 
 #define LIS2MDL_OUTX_L_REG 0x68
 
 #define LIS2MDL_TEMP_OUT_L_REG 0x6E
+
+#define COMP_TEMP_EN 0x80 // CFG_REG_A bit7: must be 1 for correct operation (datasheet Table 23)
+
+// CFG_REG_B (0x61) bits
+#define LIS2MDL_LPF      0x01 // bit0: low-pass filter (BW ODR/4 instead of ODR/2)
+#define LIS2MDL_OFF_CANC 0x02 // bit1: offset cancellation (internal set/reset bias cancel)
+
+// CFG_REG_C (0x62) bits
+#define LIS2MDL_I2C_DIS  0x20 // bit5: disable I2C interface (SPI only)
+#define LIS2MDL_BDU      0x10 // bit4: block data update
+#define LIS2MDL_4WSPI    0x04 // bit2: enable 4-wire SPI (SDO on pin 7)
 
 #define ODR_10Hz  0x00
 #define ODR_20Hz  0x01
