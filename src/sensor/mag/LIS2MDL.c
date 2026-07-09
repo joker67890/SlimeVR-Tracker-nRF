@@ -13,16 +13,30 @@ LOG_MODULE_REGISTER(LIS2MDL, LOG_LEVEL_DBG);
 
 int lis2_init(float time, float *actual_time)
 {
-	// nothing to initialize..
+	// CFG_REG_C: BDU always set; 4WSPI + I2C_DIS only in SPI mode
+	// (I2C mode must not set I2C_DIS or it cuts off the bus)
+	enum sensor_interface_spec spec = sensor_interface_get_spec(SENSOR_INTERFACE_DEV_MAG);
+	uint8_t cfg_c = LIS2MDL_BDU;
+	if (spec == SENSOR_INTERFACE_SPEC_SPI)
+		cfg_c |= LIS2MDL_4WSPI | LIS2MDL_I2C_DIS;
+	int err = ssi_reg_write_byte(SENSOR_INTERFACE_DEV_MAG, LIS2MDL_CFG_REG_C, cfg_c);
+
+	// CFG_REG_B: LPF (ODR/4 bandwidth) + OFF_CANC (internal bias cancellation)
+	err |= ssi_reg_write_byte(SENSOR_INTERFACE_DEV_MAG, LIS2MDL_CFG_REG_B, LIS2MDL_LPF | LIS2MDL_OFF_CANC);
+	if (err)
+		LOG_ERR("Communication error");
+
 	last_odr = 0xff; // reset last odr
-	int err = lis2_update_odr(time, actual_time);
+	err = lis2_update_odr(time, actual_time);
 	return (err < 0 ? err : 0);
 }
 
 void lis2_shutdown(void)
 {
 	last_odr = 0xff; // reset last odr
-	int err = ssi_reg_write_byte(SENSOR_INTERFACE_DEV_MAG, LIS2MDL_CFG_REG_A, 0x20);
+	// MD_IDLE instead of SOFT_RST (0x20) to preserve CFG_REG_B/C settings
+	// (SOFT_RST resets all config registers, losing 4WSPI/BDU/LPF/OFF_CANC)
+	int err = ssi_reg_write_byte(SENSOR_INTERFACE_DEV_MAG, LIS2MDL_CFG_REG_A, COMP_TEMP_EN | MD_IDLE);
 	if (err)
 		LOG_ERR("Communication error");
 }
@@ -40,8 +54,8 @@ int lis2_update_odr(float time, float *actual_time)
 	}
 	else if (time == INFINITY) // oneshot/single
 	{
-		MD = MD_SINGLE;
-		ODR = 50;
+//		MD = MD_SINGLE;
+//		ODR = 0;
 		MD = MD_IDLE; // No idea if single measurements will be fast enough, so just use continuous anyway
 		ODR = 0;
 	}
@@ -87,7 +101,7 @@ int lis2_update_odr(float time, float *actual_time)
 	else
 		last_odr = MODR;
 
-	int err = ssi_reg_write_byte(SENSOR_INTERFACE_DEV_MAG, LIS2MDL_CFG_REG_A, MODR << 2 | MD); // set mag ODR and MD
+	int err = ssi_reg_write_byte(SENSOR_INTERFACE_DEV_MAG, LIS2MDL_CFG_REG_A, COMP_TEMP_EN | MODR << 2 | MD); // set mag ODR and MD (temp comp must be on)
 	if (err)
 		LOG_ERR("Communication error");
 
@@ -98,21 +112,32 @@ int lis2_update_odr(float time, float *actual_time)
 void lis2_mag_oneshot(void)
 {
 	// write MD_SINGLE again to trigger a measurement
-	int err = ssi_reg_write_byte(SENSOR_INTERFACE_DEV_MAG, LIS2MDL_CFG_REG_A, last_odr << 2 | MD_SINGLE); // set mag ODR and MD
+	int err = ssi_reg_write_byte(SENSOR_INTERFACE_DEV_MAG, LIS2MDL_CFG_REG_A, COMP_TEMP_EN | last_odr << 2 | MD_SINGLE); // set mag ODR and MD (temp comp must be on)
 	if (err)
 		LOG_ERR("Communication error");
+	// Single mode auto-returns to idle after measurement; reset last_odr so the
+	// next update_odr() re-writes the mode instead of skipping (last_odr == MODR)
+	// and leaving the device stuck in idle.
+	last_odr = 0xff;
 }
 
 bool lis2_mag_read(float m[3])
 {
-	int err = 0;
-	uint8_t status;
-	while ((status & 0x03) == MD_SINGLE) // wait for oneshot to complete
-		err |= ssi_reg_read_byte(SENSOR_INTERFACE_DEV_MAG, LIS2MDL_CFG_REG_A, &status);
+	// Read all 6 data registers every call. This always releases the BDU lock
+	// (BDU=1 + a skipped/partial data read would otherwise freeze the output
+	// regs and stall data-ready forever) and removes the old uninitialized
+	// `status` while-loop that could spin on a transient SPI error and hang the
+	// sensor loop. Always return true so mag_sample advances every loop pass;
+	// duplicate samples are filtered downstream (fusion time-gate, calibration
+	// direction-diversity gate), so flow control here is unnecessary and a
+	// data-ready gate has proven fragile with this part's BDU/continuous combo.
 	uint8_t rawData[6];
-	err |= ssi_burst_read(SENSOR_INTERFACE_DEV_MAG, LIS2MDL_OUTX_L_REG, &rawData[0], 6);
+	int err = ssi_burst_read(SENSOR_INTERFACE_DEV_MAG, LIS2MDL_OUTX_L_REG, &rawData[0], 6);
 	if (err)
+	{
 		LOG_ERR("Communication error");
+		return false;
+	}
 	lis2_mag_process(rawData, m);
 	return true;
 }
@@ -152,5 +177,6 @@ const sensor_mag_t sensor_mag_lis2mdl = {
 	*lis2_temp_read,
 
 	*lis2_mag_process,
-	6, 6
+	6, 6,
+	1.5f
 };
