@@ -132,7 +132,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.venv
-          key: venv-${{ env.ZEPHYR_SDK_VERSION }}
+          key: venv-bootstrap-${{ env.ZEPHYR_SDK_VERSION }}
 
       - name: 🐍 Setup Python venv + West
         id: setup-venv
@@ -158,14 +158,14 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.venv
-          key: venv-pip-${{ env.ZEPHYR_SDK_VERSION }}-${{ hashFiles('zephyr-workspace/zephyr/scripts/requirements.txt') }}
+          key: venv-pip-${{ env.ZEPHYR_SDK_VERSION }}-${{ hashFiles('zephyr-workspace/zephyr/scripts/requirements*.txt', 'zephyr-workspace/nrf/scripts/requirements-build.txt', 'zephyr-workspace/bootloader/mcuboot/scripts/requirements.txt') }}
 
-      - name: 🐍 Install Zephyr Python Requirements
+      - name: 🐍 Install NCS, Zephyr, and MCUboot Python Requirements
         id: install-pip
         if: steps.cache-pip.outputs.cache-hit != 'true'
         run: |
           cd zephyr-workspace
-          ~/.venv/bin/pip install -r zephyr/scripts/requirements.txt
+          ~/.venv/bin/pip install -r zephyr/scripts/requirements.txt -r nrf/scripts/requirements-build.txt -r bootloader/mcuboot/scripts/requirements.txt
 
       - name: 📦 Cache Repository
         id: cache-repository
@@ -191,15 +191,19 @@ jobs:
 
   build:
     needs: setup
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
         boards: [
+                  {boardname: "xiao_nrf54lm20a/nrf54lm20a/cpuapp", filename: "SlimeNRF_XIAO_nRF54LM20A_Tracker"},
+                  {boardname: "xiao_nrf54lm20a/nrf54lm20a/cpuapp/sense", filename: "SlimeNRF_XIAO_nRF54LM20A_Sense_Tracker"},
                   {boardname: "xiao_ble/nrf52840", filename: "SlimeNRF_XIAO_Tracker"},
                   {boardname: "xiao_ble/nrf52840/sense", filename: "SlimeNRF_XIAO_Sense_Tracker"},
                   {boardname: "promicro_uf2/nrf52840/i2c", filename: "SlimeNRF_ProMicro_StackedSmol_Tracker_I2C"},
                   {boardname: "promicro_uf2/nrf52840/spi", filename: "SlimeNRF_ProMicro_StackedSmol_Tracker_SPI"},
+                  {boardname: "promicro_uf2/nrf52840/smspi", filename: "SlimeNRF_ProMicro_StackedSmol_Tracker_SMSPI"},
+                  {boardname: "promicro_uf2/nrf52840/601n1", filename: "SlimeNRF_ProMicro_StackedSmol_Tracker_601N1"},
+                  {boardname: "promicro_uf2/nrf52840/lwkj_icm45v1", filename: "SlimeNRF_ProMicro_StackedSmol_Tracker_LWKJ_ICM45V1"},
                   # {boardname: "promicro_uf2/nrf52840/spi", filename: "SlimeNRF_ProMicro_StackedSmol_Tracker_SPI_SD", with_softdevice: true},
                   {boardname: "promicro_uf2/nrf52840/default_spi", filename: "SlimeNRF_ProMicro_Tracker_SPI"},
                   {boardname: "promicro_uf2/nrf52840/default_i2c", filename: "SlimeNRF_ProMicro_Tracker_I2C"},
@@ -210,9 +214,12 @@ jobs:
                   {boardname: "mochi_uf2/nrf52833", filename: "Mochi_Tracker"},
                   {boardname: "dawn_tracker_mini_uf2/nrf52833", filename: "Dawn_Tracker_Mini"},
                   {boardname: "aero_tracker_uf2/nrf52840", filename: "Aero_Tracker"},
+                  {boardname: "aero_pro_uf2/nrf52840", filename: "Aero_Tracker_Pro"},
                   {boardname: "kawazu_uf2/nrf52833", filename: "Kawazu_Tracker"},
                   {boardname: "nini_slimevr_mag_uf2/nrf52833", filename: "NiNi_SlimeVR_MAG_Tracker"},
-                  {boardname: "nekonya_tracker_uf2/nrf52833", filename: "nekonya_tracker_uf2"}
+                  {boardname: "nekonya_tracker_uf2/nrf52833", filename: "nekonya_tracker_uf2"},
+                  {boardname: "estmini_uf2/nrf52840", filename: "Estmini_Tracker"},
+                  {boardname: "paper_smol_v1_uf2/nrf52833", filename: "paper_smol_v1_uf2"},
                 ]
     runs-on: ubuntu-latest
     steps:
@@ -266,10 +273,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ~/.venv
-          key: venv-pip-${{ env.ZEPHYR_SDK_VERSION }}-${{ hashFiles('zephyr-workspace/zephyr/scripts/requirements.txt') }}
-          restore-keys: |
-            venv-pip-
-            venv-
+          key: venv-pip-${{ env.ZEPHYR_SDK_VERSION }}-${{ hashFiles('zephyr-workspace/zephyr/scripts/requirements*.txt', 'zephyr-workspace/nrf/scripts/requirements-build.txt', 'zephyr-workspace/bootloader/mcuboot/scripts/requirements.txt') }}
           fail-on-cache-miss: true
 
       - name: ♻️ Register Zephyr Workspace
@@ -319,7 +323,8 @@ jobs:
           if [ "${{ matrix.boards.with_softdevice }}" = "true" ]; then
             for artifact in \
               "zephyr.hex:${{ matrix.boards.filename }}_OTA.hex" \
-              "zephyr_sd.hex:${{ matrix.boards.filename }}.hex"; do
+              "zephyr_sd.hex:${{ matrix.boards.filename }}.hex" \
+              "zephyr_sd.uf2:${{ matrix.boards.filename }}.uf2"; do
               src_name="${artifact%%:*}"
               dst_name="${artifact#*:}"
               src="$REPO_DIR/build/$REPO_DIR/zephyr/$src_name"
@@ -332,14 +337,16 @@ jobs:
               fi
             done
           else
-            src="$REPO_DIR/build/$REPO_DIR/zephyr/zephyr.hex"
-            dst="Releases/${{ matrix.boards.filename }}.hex"
-            if [ -f "$src" ]; then
-              cp "$src" "$dst"
-              echo "Saved: $dst"
-            else
-              echo "Not found (skip): $src"
-            fi
+            for ext in uf2 hex; do
+              src="$REPO_DIR/build/$REPO_DIR/zephyr/zephyr.${ext}"
+              dst="Releases/${{ matrix.boards.filename }}.${ext}"
+              if [ -f "$src" ]; then
+                cp "$src" "$dst"
+                echo "Saved: $dst"
+              else
+                echo "Not found (skip): $src"
+              fi
+            done
           fi
 
       - name: 💾 Upload Artifact - ${{ matrix.boards.boardname }}
@@ -350,7 +357,7 @@ jobs:
           name: ${{ matrix.boards.filename }}
           if-no-files-found: warn
           path: |
-            zephyr-workspace/Releases/${{ matrix.boards.filename }}*.hex
+            zephyr-workspace/Releases/${{ matrix.boards.filename }}*
 
   publish-release:
     needs: build
@@ -375,10 +382,20 @@ jobs:
         with:
           path: release-artifacts
 
+      - name: Prefer UF2 over same-named HEX assets
+        run: |
+          while IFS= read -r -d '' hex_file; do
+            uf2_file="${hex_file%.hex}.uf2"
+            if [ -f "$uf2_file" ]; then
+              echo "Skipping HEX because UF2 exists: $hex_file"
+              rm "$hex_file"
+            fi
+          done < <(find release-artifacts -type f -name '*.hex' -print0)
+
       - name: 🚀 Upload Artifacts to GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           fail_on_unmatched_files: true
           files: |
-            release-artifacts/**/*.hex
+            release-artifacts/**/*.uf2
